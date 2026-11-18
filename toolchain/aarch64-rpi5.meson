@@ -1,0 +1,18 @@
+# Usage: meson setup build --cross-file toolchain/aarch64-rpi5.meson
+[binaries]
+c = 'aarch64-linux-gnu-gcc'
+cpp = 'aarch64-linux-gnu-g++'
+ar = 'aarch64-linux-gnu-ar'
+strip = 'aarch64-linux-gnu-strip'
+pkg-config = '@DIRNAME@' / 'aarch64-linux-gnu-pkg-config'
+exe_wrapper = ['qemu-aarch64', '-L', '/usr/aarch64-linux-gnu']
+
+[built-in options]
+c_args = ['-mcpu=cortex-a76']
+cpp_args = ['-mcpu=cortex-a76']
+
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'cortex-a76'
+endian = 'little'

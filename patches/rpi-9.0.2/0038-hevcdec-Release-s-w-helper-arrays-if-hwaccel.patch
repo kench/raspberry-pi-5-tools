@@ -1,0 +1,31 @@
+From 12cc1f42f06ff0e85633c2602c96786fbd280b70 Mon Sep 17 00:00:00 2001
+From: John Cox <jc@kynesim.co.uk>
+Date: Mon, 21 Sep 2026 19:25:15 +0100
+Subject: [PATCH 38/38] hevcdec: Release s/w helper arrays if hwaccel
+
+There is code to avoid allocating helper arrays but unfortuantely
+hw accel status isn't known when it is called so the memory is alloced
+anyway.
+---
+ libavcodec/hevc/hevcdec.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index 24b5ac30155..8210b811120 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -3290,6 +3290,11 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
+         }
+     }
+ 
++    // set_sps() runs before get_format(), so avctx->hwaccel is not yet known
++    // there and the s/w decode helper arrays get allocated regardless
++    if (s->avctx->hwaccel && l->tab_mvf_pool)
++        pic_arrays_free(l);
++
+     if (l->horizontal_bs) {
+         memset(l->horizontal_bs, 0, l->bs_width * l->bs_height);
+         memset(l->vertical_bs,   0, l->bs_width * l->bs_height);
+-- 
+2.47.3
+

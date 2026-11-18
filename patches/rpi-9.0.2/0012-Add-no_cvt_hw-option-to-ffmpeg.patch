@@ -1,0 +1,117 @@
+From e1cf82ca56f7ee72849033eca129bddfc4912597 Mon Sep 17 00:00:00 2001
+From: John Cox <jc@kynesim.co.uk>
+Date: Tue, 27 Apr 2021 19:30:36 +0100
+Subject: [PATCH 12/38] Add no_cvt_hw option to ffmpeg
+
+---
+ fftools/ffmpeg.h          | 2 ++
+ fftools/ffmpeg_dec.c      | 9 ++++++---
+ fftools/ffmpeg_filter.c   | 3 +++
+ fftools/ffmpeg_opt.c      | 8 ++++++--
+ tests/checkasm/checkasm.h | 5 +----
+ 5 files changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/fftools/ffmpeg.h b/fftools/ffmpeg.h
+index c44aaf6032f..72ad5edc0e2 100644
+--- a/fftools/ffmpeg.h
++++ b/fftools/ffmpeg.h
+@@ -735,6 +735,8 @@ extern enum VideoSyncMethod video_sync_method;
+ extern float frame_drop_threshold;
+ extern int do_benchmark;
+ extern int do_benchmark_all;
++extern int no_cvt_hw;
++extern int do_deinterlace;
+ extern int do_hex_dump;
+ extern int do_pkt_dump;
+ extern int copy_ts;
+diff --git a/fftools/ffmpeg_dec.c b/fftools/ffmpeg_dec.c
+index 1b37d39e6dc..25bdca04b25 100644
+--- a/fftools/ffmpeg_dec.c
++++ b/fftools/ffmpeg_dec.c
+@@ -387,7 +387,7 @@ fail:
+ static int video_frame_process(DecoderPriv *dp, AVFrame *frame,
+                                unsigned *outputs_mask)
+ {
+-    if (frame->format == dp->hwaccel_pix_fmt) {
++    if (!no_cvt_hw && frame->format == dp->hwaccel_pix_fmt) {
+         int err = hwaccel_retrieve_data(dp->dec_ctx, frame);
+         if (err < 0)
+             return err;
+@@ -1331,12 +1331,15 @@ static enum AVPixelFormat get_format(AVCodecContext *s, const enum AVPixelFormat
+             break;
+ 
+         if (dp->hwaccel_id == HWACCEL_GENERIC ||
+-            dp->hwaccel_id == HWACCEL_AUTO) {
++            dp->hwaccel_id == HWACCEL_AUTO ||
++			no_cvt_hw) {
+             for (int i = 0;; i++) {
+                 config = avcodec_get_hw_config(s->codec, i);
+                 if (!config)
+                     break;
+-                if (!(config->methods &
++                if (no_cvt_hw && (config->methods & AV_CODEC_HW_CONFIG_METHOD_INTERNAL))
++                    av_log(s, AV_LOG_DEBUG, "no_cvt_hw so trying pix_fmt %d with codec internal hwaccel\n", *p);
++                else if (!(config->methods &
+                       AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
+                     continue;
+                 if (config->pix_fmt == *p)
+diff --git a/fftools/ffmpeg_filter.c b/fftools/ffmpeg_filter.c
+index 92cdb6642c0..470930d07c1 100644
+--- a/fftools/ffmpeg_filter.c
++++ b/fftools/ffmpeg_filter.c
+@@ -3117,6 +3117,9 @@ static int send_frame(FilterGraph *fg, FilterGraphThread *fgt,
+         (ifp->hw_frames_ctx && ifp->hw_frames_ctx->data != frame->hw_frames_ctx->data))
+         need_reinit |= HWACCEL_CHANGED;
+ 
++    if (no_cvt_hw && fgt->graph)
++        need_reinit = 0;
++
+     if (need_reinit) {
+         ret = ifilter_parameters_from_frame(ifilter, frame);
+         if (ret < 0)
+diff --git a/fftools/ffmpeg_opt.c b/fftools/ffmpeg_opt.c
+index 2c362c64af8..889cbb90133 100644
+--- a/fftools/ffmpeg_opt.c
++++ b/fftools/ffmpeg_opt.c
+@@ -59,6 +59,7 @@ float dts_error_threshold   = 3600*30;
+ float frame_drop_threshold = 0;
+ int do_benchmark      = 0;
+ int do_benchmark_all  = 0;
++int no_cvt_hw         = 0;
+ int do_hex_dump       = 0;
+ int do_pkt_dump       = 0;
+ int copy_ts           = 0;
+@@ -1647,8 +1648,11 @@ const OptionDef options[] = {
+     { "benchmark_all",          OPT_TYPE_BOOL, OPT_EXPERT,
+         { &do_benchmark_all },
+       "add timings for each task" },
+-    { "progress",               OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT,
+-        { .func_arg = opt_progress },
++    { "no_cvt_hw",      		OPT_TYPE_BOOL, OPT_EXPERT,
++		{ &no_cvt_hw },
++      "do not auto-convert hw frames to sw" },
++	{ "progress",               OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT,
++		{ .func_arg = opt_progress },
+       "write program-readable progress information", "url" },
+     { "stdin",                  OPT_TYPE_BOOL, OPT_EXPERT,
+         { &stdin_interaction },
+diff --git a/tests/checkasm/checkasm.h b/tests/checkasm/checkasm.h
+index 6ddec83aef8..d2dbc6e7d0e 100644
+--- a/tests/checkasm/checkasm.h
++++ b/tests/checkasm/checkasm.h
+@@ -94,11 +94,8 @@ void checkasm_check_pixblockdsp(void);
+ void checkasm_check_pixelutils(void);
+ void checkasm_check_png(void);
+ void checkasm_check_qpeldsp(void);
+-<<<<<<< HEAD
+-void checkasm_check_sbcdsp(void);
+-=======
+ void checkasm_check_rpi_sand(void);
+->>>>>>> 5953675053 (checkasm: Add tests for rpi_sand sand30 fns)
++void checkasm_check_sbcdsp(void);
+ void checkasm_check_sbrdsp(void);
+ void checkasm_check_rv34dsp(void);
+ void checkasm_check_rv40dsp(void);
+-- 
+2.47.3
+

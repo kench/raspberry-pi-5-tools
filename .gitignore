@@ -1,0 +1,7 @@
+# Downloaded upstream source (FFmpeg + rpi remote, srtla); fetch with the steps in README.md
+/src/
+# Generated build output and install staging
+/build/
+/build-meson/
+/build-cmake/
+/stage/

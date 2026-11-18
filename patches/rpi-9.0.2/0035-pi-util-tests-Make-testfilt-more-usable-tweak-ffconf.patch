@@ -1,0 +1,182 @@
+From c68aea78e6753be0099f1e4fabfe60cda75909b8 Mon Sep 17 00:00:00 2001
+From: John Cox <jc@kynesim.co.uk>
+Date: Mon, 10 Aug 2026 15:28:58 +0100
+Subject: [PATCH 35/38] pi-util/tests: Make testfilt more usable, tweak ffconf
+ printing
+
+---
+ pi-util/ffconf.py   | 22 +++++++--------
+ pi-util/testfilt.py | 66 ++++++++++++++++++++++++++++++++++++---------
+ 2 files changed, 64 insertions(+), 24 deletions(-)
+
+diff --git a/pi-util/ffconf.py b/pi-util/ffconf.py
+index 202f2a9b6b1..f6081dfe52e 100755
+--- a/pi-util/ffconf.py
++++ b/pi-util/ffconf.py
+@@ -176,7 +176,7 @@ def doconf(csva, tests, test_root, vcodec, dectype, args):
+         exp_test = int(a[0])
+         if (exp_test and runtest(a[1], tests)):
+             name = a[1]
+-            print ("==== ", name, end="")
++            print (f'==== {name}: ', end="", flush=True)
+             sys.stdout.flush()
+ 
+             (rv, frametype, v4l2fmt) = testone(os.path.join(test_root, name), name, a[2], a[3], a[4], dectype=dectype, vcodec=vcodec, args=args)
+@@ -214,31 +214,31 @@ def doconf(csva, tests, test_root, vcodec, dectype, args):
+                 unx_nomatch.append(name)
+ 
+             if comments:
+-                print(f" ({",".join(comments)})", end="")
++                print(f"({",".join(comments)}) ", end="")
+ 
+             if (rv == 0):
+                 if exp_test == 2:
+-                    print(": * OK *")
++                    print("* OK *")
+                     unx_success.append(name)
+                 else:
+-                    print(": ok")
++                    print("ok")
+             elif exp_test == 2 and rv == 1:
+-                print(": fail")
++                print("fail")
+             elif exp_test == 3 and rv == 2:
+                 # Call an expected "crash" an abort
+-                print(": abort")
++                print("abort")
+             else:
+                 unx_failures.append(name)
+                 if rv == 1:
+-                    print(": * FAIL *")
++                    print("* FAIL *")
+                 elif (rv == 2) :
+-                    print(": * CRASH *")
++                    print("* CRASH *")
+                 elif (rv == 3) :
+-                    print(": * MD5 MISSING *")
++                    print("* MD5 MISSING *")
+                 elif (rv == 4) :
+-                    print(": * VALGRIND *")
++                    print("* VALGRIND *")
+                 else :
+-                    print(": * BANG *")
++                    print("* BANG *")
+ 
+     print()
+     print(f"Tested using decode: {dectype.textname}, Frame type: {args.hwfmt}")
+diff --git a/pi-util/testfilt.py b/pi-util/testfilt.py
+index b322dac0c22..efa3fd560ca 100755
+--- a/pi-util/testfilt.py
++++ b/pi-util/testfilt.py
+@@ -10,8 +10,9 @@ import csv
+ from stat import *
+ 
+ class validator:
+-    def __init__(self):
+-        self.ok = False
++    def __init__(self, ok=False):
++        self.ok = ok
++        self.fail_msg = "Failed"
+ 
+     def isok(self):
+         return self.ok
+@@ -19,6 +20,15 @@ class validator:
+     def setok(self):
+         self.ok = True
+ 
++    def setfail(self):
++        self.ok = False
++
++    def setmsg(self, msg):
++        self.fail_msg = msg[:]
++
++    def failmsg(self):
++        return self.fail_msg
++
+ class valid_regex(validator):
+     def __init__(self, regex):
+         super().__init__()
+@@ -28,6 +38,17 @@ class valid_regex(validator):
+         if self.isok() or self.regex.search(line):
+             self.setok()
+ 
++class invalid_regex(validator):
++    def __init__(self, regex, fail_msg):
++        super().__init__(True)
++        self.setmsg(fail_msg)
++        self.regex = re.compile(regex)
++
++    def scanline(self, line):
++        if not self.isok():
++            return
++        if self.regex.search(line):
++            self.setfail()
+ 
+ def validate(validators, flog):
+     for line in flog:
+@@ -39,13 +60,17 @@ def validate(validators, flog):
+         if not v.isok():
+             ok = False
+             # complain
+-            print("Test failed")
++            print(v.failmsg())
++            break
+ 
+     if ok:
+         print("OK")
+     return ok
+ 
+ def runtest(name, ffmpeg, args, suffix, validators):
++
++    print(f'==== {name}: ', end="", flush=True)
++
+     log_root = os.path.join("/tmp", "testfilt", name)
+     ofilename = os.path.join(log_root, name + suffix)
+ 
+@@ -66,18 +91,33 @@ def runtest(name, ffmpeg, args, suffix, validators):
+     flog = open(os.path.join(log_root, name + ".log"), "rt")
+     return validate(validators, flog)
+ 
+-def sayok(log_root, flog):
+-    print("Woohoo")
+-    return True
+-
+-if __name__ == '__main__':
+-
++def main():
+     argp = argparse.ArgumentParser(description="FFmpeg filter tester")
+     argp.add_argument("--ffmpeg", default="./ffmpeg", help="ffmpeg exec name")
++    argp.add_argument("--test_root", default="../streams", help="Root dir for test")
+     args = argp.parse_args()
+ 
++    if not os.path.isdir(args.test_root):
++        print("Test root dir '%s' not found" % args.test_root)
++        return 2
++
++    if os.path.isdir(args.ffmpeg):
++        args.ffmpeg = os.path.join(args.ffmpeg, "ffmpeg")
++    if not os.path.isfile(args.ffmpeg):
++        print("FFmpeg file '%s' not found" % args.ffmpeg)
++        return 2
++
++    src_file = os.path.join(args.test_root, "jellyfish-3-mbps-hd-h264.mkv")
++    if not os.path.isfile(src_file):
++        print("Test source file '%s' not found" % src_file)
++        return 2
++
+     runtest("ATest", args.ffmpeg, ["-v", "verbose", "-no_cvt_hw", "-an", "-c:v", "h264_v4l2m2m", "-i",
+-                                   "/home/johncox/server/TestMedia/Sony/jellyfish-10-mbps-hd-h264.mkv",
+-#                                    "/home/jc/rpi/streams/jellyfish-3-mbps-hd-h264.mkv",
+-                                   "-c:v", "h264_v4l2m2m", "-b:v", "2M"], ".mkv",
+-            [valid_regex(r'Output stream #0:0 \(video\): 900 frames encoded; 900 packets muxed')])
++                                   src_file, "-c:v", "h264_v4l2m2m", "-b:v", "2M"], ".mkv",
++            [invalid_regex(r'Could not find a valid device', "Device not found (not Pi4?)"),
++             valid_regex(r'Output stream #0:0 \(video\): 900 frames encoded; 900 packets muxed')])
++    return 0
++
++if __name__ == '__main__':
++    exit(main())
++
+-- 
+2.47.3
+

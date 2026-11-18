@@ -1,0 +1,70 @@
+From 4ec1add10ff9d5ddf40aaf51839869c8da216b6d Mon Sep 17 00:00:00 2001
+From: John Cox <jc@kynesim.co.uk>
+Date: Mon, 12 Jan 2026 15:16:40 +0000
+Subject: [PATCH 33/38] v4l2m2m: Add AV1 support
+
+---
+ configure                 | 2 ++
+ libavcodec/allcodecs.c    | 1 +
+ libavcodec/v4l2_fmt.c     | 3 +++
+ libavcodec/v4l2_m2m_dec.c | 1 +
+ 4 files changed, 7 insertions(+)
+
+diff --git a/configure b/configure
+index 18828c9fd34..7cee7a0cc1c 100755
+--- a/configure
++++ b/configure
+@@ -3638,6 +3638,7 @@ av1_nvenc_encoder_select="atsc_a53"
+ av1_qsv_decoder_select="qsvdec"
+ av1_qsv_encoder_deps="libvpl"
+ av1_qsv_encoder_select="qsvenc"
++av1_v4l2m2m_decoder_deps="v4l2_m2m av1_v4l2_m2m"
+ av1_vaapi_encoder_deps="VAEncPictureParameterBufferAV1"
+ av1_vaapi_encoder_select="cbs_av1 vaapi_encode"
+ av1_vulkan_encoder_deps="vulkan_1_4"
+@@ -7687,6 +7688,7 @@ if enabled v4l2_m2m; then
+     check_cc h264_v4l2_m2m linux/videodev2.h "int i = V4L2_PIX_FMT_H264;"
+     check_cc vp8_v4l2_m2m linux/videodev2.h "int i = V4L2_PIX_FMT_VP8;"
+     check_cc vp9_v4l2_m2m linux/videodev2.h "int i = V4L2_PIX_FMT_VP9;"
++    check_cc av1_v4l2_m2m linux/videodev2.h "int i = V4L2_PIX_FMT_AV1;"
+ fi
+ 
+ check_func_headers "linux/media.h linux/videodev2.h" v4l2_timeval_to_ns
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index 47eded261f1..001839170f6 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -857,6 +857,7 @@ extern const FFCodec ff_av1_qsv_encoder;
+ extern const FFCodec ff_av1_amf_encoder;
+ extern const FFCodec ff_av1_amf_decoder;
+ extern const FFCodec ff_av1_mf_encoder;
++extern const FFCodec ff_av1_v4l2m2m_decoder;
+ extern const FFCodec ff_av1_vaapi_encoder;
+ extern const FFCodec ff_av1_vulkan_encoder;
+ extern const FFCodec ff_libopenh264_encoder;
+diff --git a/libavcodec/v4l2_fmt.c b/libavcodec/v4l2_fmt.c
+index c820a1d5227..100827b7af5 100644
+--- a/libavcodec/v4l2_fmt.c
++++ b/libavcodec/v4l2_fmt.c
+@@ -112,6 +112,9 @@ static const struct fmt_conversion {
+ #ifdef V4L2_PIX_FMT_HEVC
+     { AV_FMT(NONE),        AV_CODEC(HEVC),        V4L2_FMT(HEVC) },
+ #endif
++#ifdef V4L2_PIX_FMT_AV1
++    { AV_FMT(NONE),        AV_CODEC(AV1),         V4L2_FMT(AV1) },
++#endif
+ #ifdef V4L2_PIX_FMT_VC1_ANNEX_G
+     { AV_FMT(NONE),        AV_CODEC(VC1),         V4L2_FMT(VC1_ANNEX_G) },
+ #endif
+diff --git a/libavcodec/v4l2_m2m_dec.c b/libavcodec/v4l2_m2m_dec.c
+index 0826889c987..540ebbc160a 100644
+--- a/libavcodec/v4l2_m2m_dec.c
++++ b/libavcodec/v4l2_m2m_dec.c
+@@ -1440,3 +1440,4 @@ M2MDEC(h263,  "H.263", AV_CODEC_ID_H263,       NULL);
+ M2MDEC(vc1 ,  "VC1",   AV_CODEC_ID_VC1,        NULL);
+ M2MDEC(vp8,   "VP8",   AV_CODEC_ID_VP8,        NULL);
+ M2MDEC(vp9,   "VP9",   AV_CODEC_ID_VP9,        NULL);
++M2MDEC(av1,   "AV1",   AV_CODEC_ID_AV1,        NULL);
+-- 
+2.47.3
+

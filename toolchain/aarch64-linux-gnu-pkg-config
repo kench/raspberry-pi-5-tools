@@ -1,0 +1,6 @@
+#!/bin/sh
+# Cross pkg-config for arm64: only sees multiarch arm64 .pc files, never the host's.
+PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+export PKG_CONFIG_LIBDIR
+unset PKG_CONFIG_PATH
+exec pkg-config "$@"
