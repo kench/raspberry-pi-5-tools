@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Source this file: `. toolchain/env.sh`
 # Cross-compile environment for Raspberry Pi 5 (Cortex-A76, Raspberry Pi OS Trixie / arm64).
 
@@ -16,9 +17,11 @@ export CXXFLAGS="${CFLAGS}"
 
 # Resolve .pc files from multiarch arm64 dev packages only, never the host's.
 # POSIX sh can't tell a sourced file its own path; fall back to sourcing from the repo root.
+# shellcheck disable=SC3028 # BASH_SOURCE is deliberate: set under bash, unset (so $0) under sh
 for _dir in "$(dirname "${BASH_SOURCE:-$0}")" ./toolchain; do
     if [ -x "$_dir/${CROSS_TRIPLE}-pkg-config" ]; then
-        export PKG_CONFIG="$(cd "$_dir" && pwd)/${CROSS_TRIPLE}-pkg-config"
+        PKG_CONFIG="$(cd "$_dir" && pwd)/${CROSS_TRIPLE}-pkg-config"
+        export PKG_CONFIG
         break
     fi
 done

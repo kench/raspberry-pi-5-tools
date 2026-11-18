@@ -1,0 +1,135 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Upstream sources, pinned so builds are reproducible. Bump these together with patches/.
+  FFMPEG_REPO: https://github.com/FFmpeg/FFmpeg
+  FFMPEG_TAG: n9.0.2
+  RPI_FFMPEG_REPO: https://github.com/jc-kynesim/rpi-ffmpeg
+  RPI_FFMPEG_SHA: 12cc1f42f06ff0e85633c2602c96786fbd280b70  # test/9.0.2/main when patches/ was exported
+  SRTLA_REPO: https://github.com/BELABOX/srtla
+  SRTLA_SHA: 37862da3d0c13b46956efd3f88877053293d97d6
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - name: Install shellcheck
+        run: apt-get update -q && apt-get install -y --no-install-recommends shellcheck
+
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: shellcheck --severity=warning toolchain/*.sh toolchain/aarch64-linux-gnu-pkg-config
+
+  build:
+    # Debian trixie matches Raspberry Pi OS Trixie's glibc (2.41), same as the local setup.
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install cross toolchain and arm64 libraries
+        run: |
+          dpkg --add-architecture arm64
+          apt-get update -q
+          apt-get install -y --no-install-recommends \
+            ca-certificates git file \
+            crossbuild-essential-arm64 pkgconf qemu-user meson ninja-build cmake make \
+            libx264-dev:arm64 libsrt-gnutls-dev:arm64 libdrm-dev:arm64 libudev-dev:arm64 \
+            libepoxy-dev:arm64 libx11-dev:arm64 libxext-dev:arm64 libxv-dev:arm64
+
+      - uses: actions/checkout@v4
+
+      - name: Verify toolchain
+        run: |
+          toolchain/verify.sh
+          meson setup build-meson test --cross-file toolchain/aarch64-rpi5.meson
+          ninja -C build-meson
+          qemu-aarch64 -L /usr/aarch64-linux-gnu build-meson/hello
+          cmake -S test -B build-cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE="$PWD/toolchain/aarch64-rpi5.cmake"
+          ninja -C build-cmake
+          qemu-aarch64 -L /usr/aarch64-linux-gnu build-cmake/hello
+
+      # Shallow clones are fine; partial clones (--filter) are not (see AGENTS.md).
+      - name: Fetch FFmpeg and apply Raspberry Pi patches
+        run: |
+          git clone -q --depth 1 --branch "$FFMPEG_TAG" "$FFMPEG_REPO" src/ffmpeg
+          cd src/ffmpeg
+          git -c user.name=ci -c user.email=ci@localhost \
+            am -q --keep-cr --whitespace=nowarn ../../patches/rpi-9.0.2/*.patch
+          git fetch -q --depth 1 "$RPI_FFMPEG_REPO" "$RPI_FFMPEG_SHA"
+          if ! git diff --quiet HEAD FETCH_HEAD; then
+            echo "::error::Patched tree differs from rpi-ffmpeg $RPI_FFMPEG_SHA; re-export patches/"
+            git diff --stat HEAD FETCH_HEAD | tail -20
+            exit 1
+          fi
+          echo "$(ls ../../patches/rpi-9.0.2 | wc -l) patches applied; tree matches rpi-ffmpeg $RPI_FFMPEG_SHA"
+
+      - name: Configure FFmpeg
+        run: |
+          toolchain/configure-ffmpeg.sh
+          for c in LIBX264_ENCODER LIBSRT_PROTOCOL HEVC_V4L2REQUEST_HWACCEL VOUT_DRM_OUTDEV VOUT_EGL_OUTDEV; do
+            grep -q "^#define CONFIG_$c 1" build/ffmpeg-arm64/config_components.h \
+              || { echo "::error::CONFIG_$c is not enabled"; exit 1; }
+          done
+
+      - name: Build FFmpeg
+        run: |
+          make -C build/ffmpeg-arm64 -j"$(nproc)"
+          make -C build/ffmpeg-arm64 install DESTDIR="$PWD/stage"
+
+      - name: Fetch and build srtla
+        run: |
+          git init -q src/srtla
+          git -C src/srtla fetch -q --depth 1 "$SRTLA_REPO" "$SRTLA_SHA"
+          git -C src/srtla checkout -q FETCH_HEAD
+          toolchain/build-srtla.sh
+
+      # Capture output before matching: `cmd | grep -q` under pipefail fails with SIGPIPE (141)
+      # when grep exits early while ffmpeg is still writing.
+      - name: Smoke test under qemu
+        run: |
+          bin=stage/usr/local/bin
+          q() { qemu-aarch64 -L /usr/aarch64-linux-gnu -E LD_LIBRARY_PATH="$PWD/stage/usr/local/lib/aarch64-linux-gnu" "$@"; }
+          check() { grep -q -- "$2" <<<"$1" && echo "ok: $3" || { echo "::error::smoke test failed: $3"; exit 1; }; }
+
+          file "$bin/ffmpeg"
+          out=$(q "$bin/ffmpeg" -hide_banner -version);   echo "${out%%$'\n'*}"
+          out=$(q "$bin/ffmpeg" -hide_banner -encoders);  check "$out" ' libx264 ' 'libx264 encoder'
+          out=$(q "$bin/ffmpeg" -hide_banner -protocols); check "$out" '^ *srt$' 'srt protocol'
+          out=$(q "$bin/ffmpeg" -hide_banner -hwaccels);  check "$out" '^drm$' 'drm hwaccel'
+
+          q "$bin/ffmpeg" -hide_banner -loglevel error -f lavfi -i testsrc2=size=640x360:rate=30 -t 2 \
+            -c:v libx264 -preset veryfast -y x264-test.mp4
+          out=$(q "$bin/ffprobe" -v error -show_entries stream=codec_name,nb_frames -of compact x264-test.mp4)
+          check "$out" 'codec_name=h264|nb_frames=60' "libx264 encode ($out)"
+
+          for b in srtla_send srtla_rec; do
+            out=$(q "$bin/$b" -v); check "$out" "^${SRTLA_SHA:0:7}$" "$b version $out"
+          done
+
+      # tar keeps the .so symlinks and executable bits that upload-artifact would drop.
+      - name: Package staged install
+        run: tar -C stage -czf ffmpeg-rpi5-arm64.tar.gz usr
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-rpi5-arm64
+          path: ffmpeg-rpi5-arm64.tar.gz
+          if-no-files-found: error

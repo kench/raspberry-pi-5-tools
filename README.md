@@ -230,6 +230,30 @@ no device to use on a Pi 5. Encode with `libx264` instead.
 - CMake: `cmake -DCMAKE_TOOLCHAIN_FILE=toolchain/aarch64-rpi5.cmake ...`.
 - Arm64 libraries: `sudo apt install <name>-dev:arm64`.
 
+## Continuous integration
+
+`.github/workflows/build.yml` runs on every push to `main`, on pull requests, and on demand
+(`workflow_dispatch`). Both jobs run in a `debian:trixie` container, which matches the Pi's glibc.
+
+- **lint**: `shellcheck --severity=warning` over the scripts in `toolchain/`.
+- **build**: the whole pipeline from this README.
+  1. Installs the toolchain and arm64 libraries, then runs `verify.sh` and test builds with
+     the meson and CMake cross files.
+  2. Shallow-clones FFmpeg `n9.0.2` and applies `patches/rpi-9.0.2/`. Fails unless the result is
+     identical to the pinned rpi-ffmpeg commit.
+  3. Configures FFmpeg. Fails if libx264, srt, the v4l2-request HEVC hwaccel or the DRM/EGL
+     outputs are missing.
+  4. Builds and stages FFmpeg, then builds srtla at a pinned commit.
+  5. Smoke-tests under qemu: checks components, encodes with libx264, and checks srtla versions.
+  6. Uploads `ffmpeg-rpi5-arm64.tar.gz` (the staged `usr/local`, about 14 MB) as a build artifact.
+
+Upstream sources are pinned in the workflow's `env:` block (`FFMPEG_TAG`, `RPI_FFMPEG_SHA`,
+`SRTLA_SHA`). When updating to a new FFmpeg or rpi-ffmpeg release, re-export `patches/` and
+bump these together.
+
+To install a CI build on a Pi, download the artifact, unpack it with
+`mkdir -p stage && tar -xzf ffmpeg-rpi5-arm64.tar.gz -C stage`, then run `toolchain/deploy.sh`.
+
 ## License
 
 The files written for this project (`toolchain/`, `test/`, `README.md`, `AGENTS.md`,

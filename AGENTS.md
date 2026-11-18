@@ -44,6 +44,7 @@ toolchain/
   configure-ffmpeg.sh          # configures FFmpeg into build/ffmpeg-arm64
   build-srtla.sh               # builds srtla into stage/usr/local/bin
   deploy.sh                    # ships stage/ to a Pi over ssh
+.github/workflows/build.yml    # CI: lint + full build/patch-check/smoke-test in debian:trixie
 patches/rpi-9.0.2/             # 38 rpi patches exported against n9.0.2
 src/ffmpeg/                    # upstream FFmpeg clone, branch rpi-9.0.2-applied (+ remote `rpi`)
 src/srtla/                     # BELABOX srtla clone (built at 37862da)
@@ -93,8 +94,22 @@ for e.g. `LIBX264_ENCODER` returns nothing, which looks like a failure but isn't
   sourced file, so it falls back to `./toolchain` (source it from the repo root).
 - **srtla's Makefile hardcodes `CFLAGS`.** Override it on the make command line and keep
   `-DVERSION=\"$(VERSION)\"`, which `-v` prints.
+- **Never `cmd | grep -q` under `pipefail`** (GitHub Actions' bash default). `grep -q` exits
+  on the first match, ffmpeg gets SIGPIPE, and the step fails with 141, intermittently.
+  Capture the output into a variable first, then match.
+- **Shallow clones are fine; partial clones aren't.** CI uses `--depth 1` clones and by-SHA
+  fetches, which GitHub supports, for FFmpeg, rpi-ffmpeg and srtla.
 - **`deploy.sh` ssh options go before the host.** `ssh_pi [opts] -- command` exists for this.
   `-t` after the hostname becomes the remote command.
+
+## CI
+
+`.github/workflows/build.yml` reproduces the full pipeline in a `debian:trixie` container
+(as root, so no sudo) and uploads `stage/` as a tarball artifact. Pinned inputs live in its
+`env:` block: `FFMPEG_TAG`, `RPI_FFMPEG_SHA` (the rpi-ffmpeg commit `patches/` was exported
+from) and `SRTLA_SHA`. Changing the FFmpeg version means re-exporting `patches/` **and**
+bumping these, or the tree-identity check fails. Smoke tests check the staged install, not
+`build/`.
 
 ## Pi 5 hardware facts
 
@@ -112,14 +127,16 @@ Verified on the host:
 - `deploy.sh`: argument/stage guards, unreachable host, and arch/OS checks (via a fake ssh).
 
 **Not yet verified:** an actual deploy to a Pi, hardware HEVC decode, the DRM/EGL output
-devices, and srtla running on real links.
+devices, and srtla running on real links. The CI workflow hasn't run on GitHub yet. Its
+fetch/patch, feature-check, smoke-test and package steps were run locally, but the shellcheck
+job was never run (shellcheck isn't installed on the dev host).
 
 ## Conventions
 
 - Shell scripts are POSIX `sh` with `set -eu`, run from anywhere (they resolve `TOP` from
   their own path), with environment-variable overrides documented in the header comment.
 - Keep `README.md` in sync when changing steps. Mark anything not actually run as unverified.
-- Tracked files: `README.md`, `AGENTS.md`, `LICENSE` (CC0 1.0), `.gitignore`, `toolchain/`, `test/`, and
+- Tracked files: `README.md`, `AGENTS.md`, `LICENSE` (CC0 1.0), `.gitignore`, `.github/`, `toolchain/`, `test/`, and
   `patches/rpi-9.0.2/`. `.gitignore` excludes `src/` (downloaded) and the generated `build/`,
   `build-meson/`, `build-cmake/` and `stage/` directories. Don't commit inside `src/` unless asked.
 - Nothing committed may contain machine-specific absolute paths. Scripts resolve paths from
